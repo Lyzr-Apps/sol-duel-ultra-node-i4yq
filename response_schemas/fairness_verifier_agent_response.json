@@ -1,0 +1,22 @@
+{
+  "agent_name": "Fairness Verifier Agent",
+  "agent_id": "699a77f6c1653e1be7d96226",
+  "description": "Retrieves on-chain randomness seed and duel result for a given duel ID and explains in plain language why the coin flip outcome was provably fair for the SolFlip Web3 Coin-Flip Duel Arena.",
+  "agent_type": "json",
+  "accessor": "result",
+  "auto_generated": true,
+  "response_schema": {
+    "duel_id": "string",
+    "verification_result": "string",
+    "randomness_seed": "string",
+    "explanation": "string",
+    "is_fair": "boolean"
+  },
+  "example_response": {
+    "duel_id": "duel_abc123xyz",
+    "verification_result": "VERIFIED",
+    "randomness_seed": "0x3a7f...c9d2 (Solana VRF proof from slot 234567890)",
+    "explanation": "This duel used Solana's on-chain VRF (Verifiable Random Function) to generate the coin flip result. The randomness seed was derived from block slot 234567890 and committed before either player joined, making it impossible for anyone to predict or manipulate the outcome.",
+    "is_fair": true
+  }
+}

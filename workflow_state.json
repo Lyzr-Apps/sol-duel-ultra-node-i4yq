@@ -1,0 +1,44 @@
+{
+  "project": "SolFlip - Web3 Coin-Flip Duel Arena",
+  "pattern": "multiple_independent_agents",
+  "agents": [
+    {
+      "agent_id": "699a77f6e2098a3529de82e3",
+      "name": "Wallet Assistant Agent",
+      "description": "Answers natural-language questions about in-game wallet balance, deposit/withdrawal history, and transaction status by querying the backend wallet API.",
+      "provider": "OpenAI",
+      "model": "gpt-4.1",
+      "temperature": 0.3,
+      "top_p": 1,
+      "trigger": "Ask About Balance on Dashboard",
+      "tools": "Custom Tool (Wallet API)",
+      "response_schema_file": "response_schemas/wallet_assistant_agent_response.json"
+    },
+    {
+      "agent_id": "699a77f6c1653e1be7d96226",
+      "name": "Fairness Verifier Agent",
+      "description": "Retrieves on-chain randomness seed and duel result for a given duel ID and explains in plain language why the coin flip outcome was provably fair.",
+      "provider": "OpenAI",
+      "model": "gpt-4.1",
+      "temperature": 0.2,
+      "top_p": 1,
+      "trigger": "Verify Fairness on Duel History",
+      "tools": "Custom Tool (Chain Verification API)",
+      "response_schema_file": "response_schemas/fairness_verifier_agent_response.json"
+    },
+    {
+      "agent_id": "699a77f6b0da46f6ada21c33",
+      "name": "Match Insight Agent",
+      "description": "Generates a brief narrative summary of a completed duel including opponent info, wager, result, and streak data suitable for social sharing.",
+      "provider": "OpenAI",
+      "model": "gpt-4.1",
+      "temperature": 0.5,
+      "top_p": 0.95,
+      "trigger": "Match Insight on Post-Duel Screen",
+      "tools": "Custom Tool (Match Data API)",
+      "response_schema_file": "response_schemas/match_insight_agent_response.json"
+    }
+  ],
+  "knowledge_bases": [],
+  "schedules": []
+}

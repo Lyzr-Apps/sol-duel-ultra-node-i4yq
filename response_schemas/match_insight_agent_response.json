@@ -1,0 +1,20 @@
+{
+  "agent_name": "Match Insight Agent",
+  "agent_id": "699a77f6b0da46f6ada21c33",
+  "description": "Generates a brief narrative summary of a completed duel including opponent info, wager, result, and streak data suitable for social sharing in the SolFlip Web3 Coin-Flip Duel Arena.",
+  "agent_type": "json",
+  "accessor": "result",
+  "auto_generated": true,
+  "response_schema": {
+    "summary": "string",
+    "highlight": "string",
+    "streak_info": "string",
+    "share_text": "string"
+  },
+  "example_response": {
+    "summary": "CryptoKing flipped against SolWhale in a high-stakes 5.0 SOL duel. CryptoKing called Heads and the coin landed Heads, netting a clean 9.5 SOL payout after the 5% platform fee.",
+    "highlight": "This win extends CryptoKing's streak to 7 in a row -- the longest active streak on the platform today.",
+    "streak_info": "CryptoKing: 7W streak | 23-11 overall (67.6% win rate). SolWhale: streak broken at 4W | 19-14 overall.",
+    "share_text": "Just flipped 5 SOL and doubled up on @SolFlip! 7 wins in a row and counting. Who wants next?"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "agent_name": "Wallet Assistant Agent",
+  "agent_id": "699a77f6e2098a3529de82e3",
+  "description": "Answers natural-language questions about in-game wallet balance, deposit/withdrawal history, and transaction status by querying the backend wallet API for the SolFlip Web3 Coin-Flip Duel Arena.",
+  "agent_type": "json",
+  "accessor": "result",
+  "auto_generated": true,
+  "response_schema": {
+    "balance_info": "string",
+    "transaction_summary": "string",
+    "advice": "string"
+  },
+  "example_response": {
+    "balance_info": "Your current balance is 2.45 SOL. This includes 2.00 SOL deposited and 0.45 SOL in winnings.",
+    "transaction_summary": "Last 3 transactions: Deposit of 1.00 SOL (confirmed, 2h ago), Duel wager of 0.50 SOL (completed, 1h ago), Duel winnings of 0.95 SOL (credited, 45min ago).",
+    "advice": "Your balance is healthy for mid-range duels. Consider withdrawing winnings periodically to lock in profits."
+  }
+}
