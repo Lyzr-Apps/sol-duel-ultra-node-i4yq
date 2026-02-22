@@ -37,9 +37,31 @@ interface AgentMessage {
 }
 
 type TabType = 'play' | 'dashboard' | 'history' | 'wallet'
-type GamePhase = 'landing' | 'connected' | 'wager' | 'matchmaking' | 'duel' | 'result'
+type GamePhase = 'landing' | 'connected' | 'wager' | 'pickside' | 'matchmaking' | 'waiting' | 'duel' | 'result'
 type AgentPanelType = 'wallet' | 'fairness' | 'insight' | null
 type HistoryFilter = 'all' | 'wins' | 'losses'
+
+interface MatchmakingPool {
+  tier: number
+  queueCount: number
+  activeGames: number
+}
+
+function generatePoolStats(): MatchmakingPool[] {
+  return WAGER_TIERS.map(tier => ({
+    tier,
+    queueCount: Math.floor(Math.random() * 15) + 1,
+    activeGames: Math.floor(Math.random() * 30) + 5
+  }))
+}
+
+function getTotalOnline(pools: MatchmakingPool[]): number {
+  return pools.reduce((sum, p) => sum + p.queueCount * 2 + p.activeGames * 2, 0)
+}
+
+function getTotalActiveGames(pools: MatchmakingPool[]): number {
+  return pools.reduce((sum, p) => sum + p.activeGames, 0)
+}
 
 // ========== HELPERS ==========
 function generateAddress(): string {
@@ -533,6 +555,13 @@ export default function Page() {
   const [currentDuelId, setCurrentDuelId] = useState('')
   const [showConfetti, setShowConfetti] = useState(false)
 
+  // ---- Matchmaking Pool State ----
+  const [poolStats, setPoolStats] = useState<MatchmakingPool[]>(() => generatePoolStats())
+  const [waitingElapsed, setWaitingElapsed] = useState(0)
+  const [opponentFound, setOpponentFound] = useState(false)
+  const waitingTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const poolRefreshRef = useRef<NodeJS.Timeout | null>(null)
+
   // ---- UI State ----
   const [depositAmount, setDepositAmount] = useState('')
   const [withdrawAmount, setWithdrawAmount] = useState('')
@@ -584,6 +613,46 @@ export default function Page() {
     return firstResult === 'win' ? streak : -streak
   })()
 
+  // ---- Pool Stats Refresh ----
+  useEffect(() => {
+    poolRefreshRef.current = setInterval(() => {
+      setPoolStats(generatePoolStats())
+    }, 8000)
+    return () => { if (poolRefreshRef.current) clearInterval(poolRefreshRef.current) }
+  }, [])
+
+  // ---- Waiting Timer ----
+  useEffect(() => {
+    if (gamePhase === 'waiting') {
+      setWaitingElapsed(0)
+      setOpponentFound(false)
+      const timer = setInterval(() => {
+        setWaitingElapsed(prev => prev + 1)
+      }, 1000)
+      waitingTimerRef.current = timer
+
+      // Simulate opponent found after random 5-15 seconds
+      const matchDelay = 5000 + Math.random() * 10000
+      const matchTimeout = setTimeout(() => {
+        setOpponentFound(true)
+        setCurrentOpponent(generateAddress())
+        // Brief pause to show opponent found, then start duel
+        setTimeout(() => {
+          const wager = selectedWager ?? parseFloat(customWager)
+          setGamePhase('duel')
+          startDuel(wager)
+        }, 1500)
+      }, matchDelay)
+
+      return () => {
+        clearInterval(timer)
+        clearTimeout(matchTimeout)
+        waitingTimerRef.current = null
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gamePhase])
+
   // ---- Sample Data Toggle ----
   useEffect(() => {
     if (sampleDataOn && duelHistory.length === 0) {
@@ -632,21 +701,31 @@ export default function Page() {
     closeFn(false)
   }, [balance])
 
-  // ---- Start Matchmaking ----
-  const startMatchmaking = useCallback(() => {
+  // ---- Pick Side → Matchmaking → Waiting ----
+  const goToPickSide = useCallback(() => {
     const wager = selectedWager ?? parseFloat(customWager)
     if (isNaN(wager) || wager <= 0 || wager > balance) return
-    setGamePhase('matchmaking')
-    setCurrentOpponent(generateAddress())
-    setPlayerSide(Math.random() > 0.5 ? 'H' : 'T')
-    matchmakingTimerRef.current = setTimeout(() => {
-      setGamePhase('duel')
-      startDuel(wager)
-    }, 3000)
+    setGamePhase('pickside')
   }, [selectedWager, customWager, balance])
+
+  const confirmSide = useCallback((side: 'H' | 'T') => {
+    setPlayerSide(side)
+    setGamePhase('matchmaking')
+    // Brief search animation, then transition to waiting
+    matchmakingTimerRef.current = setTimeout(() => {
+      setGamePhase('waiting')
+    }, 2500)
+  }, [])
 
   const cancelMatchmaking = useCallback(() => {
     if (matchmakingTimerRef.current) clearTimeout(matchmakingTimerRef.current)
+    if (waitingTimerRef.current) clearInterval(waitingTimerRef.current)
+    setOpponentFound(false)
+    setWaitingElapsed(0)
+    setGamePhase('wager')
+  }, [])
+
+  const cancelFromPickSide = useCallback(() => {
     setGamePhase('wager')
   }, [])
 
@@ -819,6 +898,8 @@ export default function Page() {
     setDuelResult(null)
     setShowConfetti(false)
     setLastDuelRecord(null)
+    setOpponentFound(false)
+    setWaitingElapsed(0)
     closeAgentPanel()
   }, [closeAgentPanel])
 
@@ -907,7 +988,7 @@ export default function Page() {
           <div className="min-h-screen pb-20 max-w-lg mx-auto relative">
 
             {/* ===== TOP STATUS BAR ===== */}
-            {gamePhase !== 'matchmaking' && gamePhase !== 'duel' && (
+            {gamePhase !== 'pickside' && gamePhase !== 'matchmaking' && gamePhase !== 'waiting' && gamePhase !== 'duel' && (
               <div className="flex items-center justify-between px-4 py-3 border-b border-[hsl(180,60%,30%)]" style={{ background: 'hsla(260,25%,9%,0.8)', backdropFilter: 'blur(12px)' }}>
                 <div className="flex items-center gap-2">
                   <RiWallet3Line className="w-4 h-4 text-[hsl(180,100%,50%)]" />
@@ -935,7 +1016,7 @@ export default function Page() {
             )}
 
             {/* ===== DASHBOARD TAB ===== */}
-            {activeTab === 'dashboard' && gamePhase !== 'wager' && gamePhase !== 'matchmaking' && gamePhase !== 'duel' && gamePhase !== 'result' && (
+            {activeTab === 'dashboard' && gamePhase !== 'wager' && gamePhase !== 'pickside' && gamePhase !== 'matchmaking' && gamePhase !== 'waiting' && gamePhase !== 'duel' && gamePhase !== 'result' && (
               <div className="px-4 pt-4 pb-4 space-y-4" style={{ animation: 'fadeIn 0.3s ease-out' }}>
                 {/* Balance Hero */}
                 <div
@@ -1133,22 +1214,30 @@ export default function Page() {
 
                 {/* Wager Grid */}
                 <div className="grid grid-cols-3 gap-3">
-                  {WAGER_TIERS.map((tier) => (
-                    <button
-                      key={tier}
-                      onClick={() => { setSelectedWager(tier); setCustomWager('') }}
-                      className="rounded-lg p-4 text-center border transition-all"
-                      style={{
-                        background: selectedWager === tier ? 'hsla(180, 100%, 50%, 0.1)' : 'hsla(260, 25%, 9%, 0.8)',
-                        borderColor: selectedWager === tier ? 'hsl(180, 100%, 50%)' : 'hsl(180, 60%, 30%)',
-                        backdropFilter: 'blur(12px)',
-                        boxShadow: selectedWager === tier ? '0 0 20px hsla(180, 100%, 50%, 0.3)' : 'none'
-                      }}
-                    >
-                      <div className="text-2xl font-bold text-[hsl(180,100%,50%)]">{tier}</div>
-                      <div className="text-[10px] text-[hsl(180,50%,45%)] uppercase tracking-wider mt-1">SOL</div>
-                    </button>
-                  ))}
+                  {WAGER_TIERS.map((tier) => {
+                    const pool = poolStats.find(p => p.tier === tier)
+                    return (
+                      <button
+                        key={tier}
+                        onClick={() => { setSelectedWager(tier); setCustomWager('') }}
+                        className="rounded-lg p-4 text-center border transition-all relative"
+                        style={{
+                          background: selectedWager === tier ? 'hsla(180, 100%, 50%, 0.1)' : 'hsla(260, 25%, 9%, 0.8)',
+                          borderColor: selectedWager === tier ? 'hsl(180, 100%, 50%)' : 'hsl(180, 60%, 30%)',
+                          backdropFilter: 'blur(12px)',
+                          boxShadow: selectedWager === tier ? '0 0 20px hsla(180, 100%, 50%, 0.3)' : 'none'
+                        }}
+                      >
+                        {pool && pool.queueCount > 0 && (
+                          <div className="absolute -top-1.5 -right-1.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-[hsl(120,80%,40%)] text-white" style={{ minWidth: '18px' }}>
+                            {pool.queueCount}
+                          </div>
+                        )}
+                        <div className="text-2xl font-bold text-[hsl(180,100%,50%)]">{tier}</div>
+                        <div className="text-[10px] text-[hsl(180,50%,45%)] uppercase tracking-wider mt-1">SOL</div>
+                      </button>
+                    )
+                  })}
                   {/* Custom */}
                   <button
                     onClick={() => { setSelectedWager(null) }}
@@ -1178,6 +1267,39 @@ export default function Page() {
                   </button>
                 </div>
 
+                {/* Live Arena Stats */}
+                <div
+                  className="rounded-lg p-3 border border-[hsl(180,60%,30%)]"
+                  style={{ background: 'hsla(260, 25%, 9%, 0.8)' }}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-[10px] uppercase tracking-widest text-[hsl(180,50%,45%)] font-bold flex items-center gap-1">
+                      <div className="w-1.5 h-1.5 rounded-full bg-[hsl(120,80%,50%)] animate-pulse" />
+                      Live Arena
+                    </div>
+                    <div className="flex items-center gap-3 text-[10px] text-[hsl(180,50%,45%)]">
+                      <span className="flex items-center gap-1"><RiGameLine className="w-3 h-3 text-[hsl(180,100%,50%)]" /> {getTotalActiveGames(poolStats)} games</span>
+                      <span className="flex items-center gap-1"><RiWallet3Line className="w-3 h-3 text-[hsl(300,80%,50%)]" /> {getTotalOnline(poolStats)} online</span>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-5 gap-1.5">
+                    {poolStats.map(pool => (
+                      <div
+                        key={pool.tier}
+                        className="text-center rounded p-1.5 border transition-all"
+                        style={{
+                          background: (selectedWager === pool.tier) ? 'hsla(180, 100%, 50%, 0.08)' : 'hsla(260, 20%, 15%, 0.6)',
+                          borderColor: (selectedWager === pool.tier) ? 'hsl(180, 100%, 50%)' : 'hsl(260, 20%, 20%)'
+                        }}
+                      >
+                        <div className="text-[10px] font-bold text-[hsl(180,100%,70%)]">{pool.tier} SOL</div>
+                        <div className="text-[10px] text-[hsl(120,80%,50%)]">{pool.queueCount} waiting</div>
+                        <div className="text-[10px] text-[hsl(180,50%,45%)]">{pool.activeGames} live</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
                 {/* Balance reminder */}
                 <div className="flex items-center justify-between px-3 py-2 rounded bg-[hsl(260,20%,15%)] border border-[hsl(180,60%,30%)]">
                   <span className="text-xs text-[hsl(180,50%,45%)]">Available Balance</span>
@@ -1194,7 +1316,7 @@ export default function Page() {
 
                 {/* Find Duel CTA */}
                 <button
-                  onClick={startMatchmaking}
+                  onClick={goToPickSide}
                   disabled={(!selectedWager && !customWager) || (selectedWager !== null && selectedWager > balance) || (!!customWager && parseFloat(customWager) > balance) || balance <= 0}
                   className="w-full py-3.5 rounded-lg font-bold text-base tracking-wider flex items-center justify-center gap-2 transition-all disabled:opacity-30"
                   style={{
@@ -1215,6 +1337,99 @@ export default function Page() {
               </div>
             )}
 
+            {/* ===== PICK SIDE ===== */}
+            {gamePhase === 'pickside' && (
+              <div className="px-4 pt-10 pb-4 flex flex-col items-center justify-center min-h-[80vh] space-y-8" style={{ animation: 'fadeIn 0.3s ease-out' }}>
+                <div className="text-center">
+                  <h2 className="text-xl font-bold text-[hsl(180,100%,70%)] tracking-wider mb-2">Pick Your Side</h2>
+                  <p className="text-xs text-[hsl(180,50%,45%)] max-w-xs mx-auto">
+                    Choose heads or tails. Your opponent gets the opposite side. The coin flip result is determined independently.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-6">
+                  {/* Heads */}
+                  <button
+                    onClick={() => confirmSide('H')}
+                    className="relative group flex flex-col items-center gap-3"
+                  >
+                    <div
+                      className="w-28 h-28 rounded-full flex items-center justify-center font-bold text-3xl border-2 transition-all group-hover:scale-105"
+                      style={{
+                        background: 'linear-gradient(135deg, hsl(260, 25%, 12%), hsl(260, 30%, 8%))',
+                        borderColor: 'hsl(180, 100%, 50%)',
+                        boxShadow: '0 0 25px hsla(180, 100%, 50%, 0.3), 0 0 50px hsla(180, 100%, 50%, 0.1)',
+                        color: 'hsl(180, 100%, 50%)'
+                      }}
+                    >
+                      <span className="font-mono tracking-wider">H</span>
+                      <div
+                        className="absolute inset-0 rounded-full border border-[hsl(180,60%,30%)] opacity-30"
+                        style={{ background: 'radial-gradient(circle at 30% 30%, hsla(180,100%,50%,0.1), transparent)' }}
+                      />
+                    </div>
+                    <span className="text-sm font-bold tracking-wider text-[hsl(180,100%,50%)] uppercase">Heads</span>
+                  </button>
+
+                  <div className="text-lg font-bold text-[hsl(180,50%,45%)]">OR</div>
+
+                  {/* Tails */}
+                  <button
+                    onClick={() => confirmSide('T')}
+                    className="relative group flex flex-col items-center gap-3"
+                  >
+                    <div
+                      className="w-28 h-28 rounded-full flex items-center justify-center font-bold text-3xl border-2 transition-all group-hover:scale-105"
+                      style={{
+                        background: 'linear-gradient(135deg, hsl(260, 25%, 12%), hsl(260, 30%, 8%))',
+                        borderColor: 'hsl(300, 80%, 50%)',
+                        boxShadow: '0 0 25px hsla(300, 80%, 50%, 0.3), 0 0 50px hsla(300, 80%, 50%, 0.1)',
+                        color: 'hsl(300, 80%, 50%)'
+                      }}
+                    >
+                      <span className="font-mono tracking-wider">T</span>
+                      <div
+                        className="absolute inset-0 rounded-full border border-[hsl(300,60%,30%)] opacity-30"
+                        style={{ background: 'radial-gradient(circle at 30% 30%, hsla(300,80%,50%,0.1), transparent)' }}
+                      />
+                    </div>
+                    <span className="text-sm font-bold tracking-wider text-[hsl(300,80%,50%)] uppercase">Tails</span>
+                  </button>
+                </div>
+
+                {/* Fair mechanism explanation */}
+                <div
+                  className="rounded-lg p-3 border border-[hsl(180,60%,30%)] max-w-sm mx-auto"
+                  style={{ background: 'hsla(260, 25%, 9%, 0.8)' }}
+                >
+                  <div className="flex items-start gap-2">
+                    <RiShieldCheckLine className="w-4 h-4 text-[hsl(120,80%,50%)] flex-shrink-0 mt-0.5" />
+                    <div>
+                      <div className="text-xs font-bold text-[hsl(120,80%,50%)] mb-0.5">Provably Fair</div>
+                      <p className="text-[10px] text-[hsl(180,50%,45%)] leading-relaxed">
+                        You choose your side. Your opponent automatically gets the opposite.
+                        The coin flip uses an independent random seed — neither player has an advantage.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Wager reminder */}
+                <div className="flex items-center gap-2 text-xs text-[hsl(180,50%,45%)]">
+                  <RiCoinLine className="w-3.5 h-3.5 text-[hsl(60,100%,50%)]" />
+                  Wager: <span className="font-bold text-[hsl(60,100%,50%)]">{selectedWager ?? customWager} SOL</span>
+                </div>
+
+                <button
+                  onClick={cancelFromPickSide}
+                  className="px-6 py-2 rounded-full border border-[hsl(180,60%,30%)] text-[hsl(180,50%,45%)] text-sm font-medium hover:bg-[hsl(260,20%,15%)] transition-colors"
+                >
+                  <RiArrowLeftLine className="w-4 h-4 inline mr-1" />
+                  Back to Wager
+                </button>
+              </div>
+            )}
+
             {/* ===== MATCHMAKING ===== */}
             {gamePhase === 'matchmaking' && (
               <div className="px-4 pt-16 pb-4 flex flex-col items-center justify-center min-h-[80vh] space-y-8" style={{ animation: 'fadeIn 0.3s ease-out' }}>
@@ -1222,6 +1437,12 @@ export default function Page() {
                 <div className="text-center">
                   <h2 className="text-lg font-bold text-[hsl(180,100%,70%)] tracking-wider mb-1">Searching for opponent...</h2>
                   <p className="text-xs text-[hsl(180,50%,45%)]">Wager: {selectedWager ?? customWager} SOL</p>
+                  <p className="text-[10px] text-[hsl(180,50%,45%)] mt-1">Your side: <span className="font-bold text-[hsl(180,100%,50%)]">{playerSide === 'H' ? 'HEADS' : 'TAILS'}</span></p>
+                </div>
+                {/* Pool stats during search */}
+                <div className="flex items-center gap-4 text-[10px] text-[hsl(180,50%,45%)]">
+                  <span className="flex items-center gap-1"><RiGameLine className="w-3 h-3" /> {getTotalActiveGames(poolStats)} active games</span>
+                  <span className="flex items-center gap-1"><RiWallet3Line className="w-3 h-3" /> {getTotalOnline(poolStats)} online</span>
                 </div>
                 <button
                   onClick={cancelMatchmaking}
@@ -1229,6 +1450,131 @@ export default function Page() {
                 >
                   Cancel
                 </button>
+              </div>
+            )}
+
+            {/* ===== WAITING LOBBY ===== */}
+            {gamePhase === 'waiting' && (
+              <div className="px-4 pt-8 pb-4 flex flex-col items-center justify-center min-h-[80vh] space-y-6" style={{ animation: 'fadeIn 0.3s ease-out' }}>
+                <div className="text-center mb-2">
+                  <h2 className="text-lg font-bold text-[hsl(180,100%,70%)] tracking-wider mb-1">Waiting for Challenger</h2>
+                  <p className="text-xs text-[hsl(180,50%,45%)]">Wager: {selectedWager ?? customWager} SOL</p>
+                </div>
+
+                {/* Player cards */}
+                <div className="flex items-center justify-between w-full max-w-sm">
+                  {/* You */}
+                  <div
+                    className="rounded-lg p-4 w-[42%] text-center border border-[hsl(180,100%,50%)]"
+                    style={{
+                      background: 'hsla(180, 100%, 50%, 0.05)',
+                      boxShadow: '0 0 20px hsla(180, 100%, 50%, 0.2)'
+                    }}
+                  >
+                    <div className="text-[10px] uppercase tracking-wider text-[hsl(180,50%,45%)] mb-1">You</div>
+                    <div className="text-xs font-mono text-[hsl(180,100%,70%)]">{truncateAddress(walletAddress)}</div>
+                    <div className="mt-2 inline-block px-2 py-0.5 rounded text-xs font-bold bg-[hsla(180,100%,50%,0.2)] text-[hsl(180,100%,50%)]">
+                      {playerSide === 'H' ? 'HEADS' : 'TAILS'}
+                    </div>
+                    <div className="mt-1">
+                      <RiCheckLine className="w-4 h-4 text-[hsl(120,80%,50%)] mx-auto" />
+                    </div>
+                  </div>
+
+                  <div className="text-xl font-bold text-[hsl(300,80%,50%)]">VS</div>
+
+                  {/* Opponent slot */}
+                  <div
+                    className="rounded-lg p-4 w-[42%] text-center border transition-all"
+                    style={{
+                      background: opponentFound ? 'hsla(300, 80%, 50%, 0.05)' : 'hsla(260, 25%, 9%, 0.8)',
+                      borderColor: opponentFound ? 'hsl(300, 80%, 50%)' : 'hsl(180, 60%, 30%)',
+                      boxShadow: opponentFound ? '0 0 20px hsla(300, 80%, 50%, 0.3)' : 'none',
+                      animation: opponentFound ? 'fadeIn 0.5s ease-out' : 'none'
+                    }}
+                  >
+                    {opponentFound ? (
+                      <>
+                        <div className="text-[10px] uppercase tracking-wider text-[hsl(180,50%,45%)] mb-1">Opponent</div>
+                        <div className="text-xs font-mono text-[hsl(180,100%,70%)]">{truncateAddress(currentOpponent)}</div>
+                        <div className="mt-2 inline-block px-2 py-0.5 rounded text-xs font-bold bg-[hsla(300,80%,50%,0.2)] text-[hsl(300,80%,50%)]">
+                          {playerSide === 'H' ? 'TAILS' : 'HEADS'}
+                        </div>
+                        <div className="mt-1">
+                          <RiCheckLine className="w-4 h-4 text-[hsl(120,80%,50%)] mx-auto" />
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="text-[10px] uppercase tracking-wider text-[hsl(180,50%,45%)] mb-1">Opponent</div>
+                        <div className="w-16 h-3 mx-auto rounded bg-[hsl(260,20%,18%)] mb-2" style={{ animation: 'dotPulse 1.4s ease-in-out infinite' }} />
+                        <div className="mt-2 inline-block px-2 py-0.5 rounded text-xs font-bold bg-[hsla(180,50%,45%,0.1)] text-[hsl(180,50%,45%)]">
+                          {playerSide === 'H' ? 'TAILS' : 'HEADS'}
+                        </div>
+                        <div className="mt-1">
+                          <RiLoader4Line className="w-4 h-4 text-[hsl(180,50%,45%)] mx-auto animate-spin" />
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* Timer */}
+                <div className="flex items-center gap-2 text-sm">
+                  <RiTimeLine className="w-4 h-4 text-[hsl(180,100%,50%)]" />
+                  <span className="font-mono text-[hsl(180,100%,70%)]">
+                    {String(Math.floor(waitingElapsed / 60)).padStart(2, '0')}:{String(waitingElapsed % 60).padStart(2, '0')}
+                  </span>
+                </div>
+
+                {/* Status message */}
+                {opponentFound ? (
+                  <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-[hsla(120,80%,40%,0.15)] border border-[hsl(120,80%,50%)]" style={{ animation: 'fadeIn 0.3s ease-out' }}>
+                    <RiCheckLine className="w-4 h-4 text-[hsl(120,80%,50%)]" />
+                    <span className="text-sm font-bold text-[hsl(120,80%,50%)]">Opponent found! Starting duel...</span>
+                  </div>
+                ) : (
+                  <div className="text-center space-y-2">
+                    <div className="flex items-center justify-center gap-1.5">
+                      <LoadingDots />
+                    </div>
+                    <p className="text-xs text-[hsl(180,50%,45%)]">Waiting for a {selectedWager ?? customWager} SOL challenger...</p>
+                  </div>
+                )}
+
+                {/* Queue stats */}
+                <div
+                  className="rounded-lg p-3 border border-[hsl(180,60%,30%)] w-full max-w-sm"
+                  style={{ background: 'hsla(260, 25%, 9%, 0.8)' }}
+                >
+                  <div className="text-[10px] uppercase tracking-widest text-[hsl(180,50%,45%)] mb-2 font-bold">Live Queue</div>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div>
+                      <div className="text-lg font-bold text-[hsl(180,100%,50%)]">
+                        {poolStats.find(p => p.tier === (selectedWager ?? parseFloat(customWager)))?.queueCount ?? Math.floor(Math.random() * 8) + 1}
+                      </div>
+                      <div className="text-[10px] text-[hsl(180,50%,45%)]">In Queue</div>
+                    </div>
+                    <div>
+                      <div className="text-lg font-bold text-[hsl(60,100%,50%)]">{getTotalActiveGames(poolStats)}</div>
+                      <div className="text-[10px] text-[hsl(180,50%,45%)]">Active Games</div>
+                    </div>
+                    <div>
+                      <div className="text-lg font-bold text-[hsl(300,80%,50%)]">{getTotalOnline(poolStats)}</div>
+                      <div className="text-[10px] text-[hsl(180,50%,45%)]">Online</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Cancel */}
+                {!opponentFound && (
+                  <button
+                    onClick={cancelMatchmaking}
+                    className="px-6 py-2 rounded-full border border-[hsl(0,100%,55%)] text-[hsl(0,100%,55%)] text-sm font-medium hover:bg-[hsla(0,100%,55%,0.1)] transition-colors"
+                  >
+                    Cancel
+                  </button>
+                )}
               </div>
             )}
 
@@ -1394,7 +1740,7 @@ export default function Page() {
             )}
 
             {/* ===== HISTORY TAB ===== */}
-            {activeTab === 'history' && gamePhase !== 'wager' && gamePhase !== 'matchmaking' && gamePhase !== 'duel' && gamePhase !== 'result' && (
+            {activeTab === 'history' && gamePhase !== 'wager' && gamePhase !== 'pickside' && gamePhase !== 'matchmaking' && gamePhase !== 'waiting' && gamePhase !== 'duel' && gamePhase !== 'result' && (
               <div className="px-4 pt-4 pb-4 space-y-4" style={{ animation: 'fadeIn 0.3s ease-out' }}>
                 <h2 className="text-lg font-bold text-[hsl(180,100%,70%)] tracking-wider">Duel History</h2>
 
@@ -1481,7 +1827,7 @@ export default function Page() {
             )}
 
             {/* ===== WALLET TAB ===== */}
-            {activeTab === 'wallet' && gamePhase !== 'wager' && gamePhase !== 'matchmaking' && gamePhase !== 'duel' && gamePhase !== 'result' && (
+            {activeTab === 'wallet' && gamePhase !== 'wager' && gamePhase !== 'pickside' && gamePhase !== 'matchmaking' && gamePhase !== 'waiting' && gamePhase !== 'duel' && gamePhase !== 'result' && (
               <div className="px-4 pt-4 pb-4 space-y-4" style={{ animation: 'fadeIn 0.3s ease-out' }}>
                 {/* Balance Hero */}
                 <div
@@ -1629,7 +1975,7 @@ export default function Page() {
             )}
 
             {/* ===== BOTTOM TAB NAVIGATION ===== */}
-            {gamePhase !== 'matchmaking' && gamePhase !== 'duel' && (
+            {gamePhase !== 'pickside' && gamePhase !== 'matchmaking' && gamePhase !== 'waiting' && gamePhase !== 'duel' && (
               <div
                 className="fixed bottom-0 left-0 right-0 z-40 border-t border-[hsl(180,60%,30%)]"
                 style={{
